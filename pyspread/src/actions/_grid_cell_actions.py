@@ -312,14 +312,25 @@ class CellActions(Actions):
     def change_frozen_attr(self):
         """Changes frozen state of cell if there is no selection"""
 
-        # Selections are not supported
-
         if self.grid.selection:
-            statustext = _("Freezing selections is not supported.")
-            post_command_event(self.main_window, self.StatusBarMsg,
-                               text=statustext)
+            boxes = zip(self.grid.selection.block_tl,
+                        self.grid.selection.block_br)
+        else:
+            cursor = self.grid.actions.cursor[:2]
+            boxes = [( cursor, cursor )]
+        tab = self.grid.actions.cursor[2]
 
-        cursor = self.grid.actions.cursor
+        alreadyToggled = []    # Store cells we've already toggled
+        for box in boxes:
+            for x in xrange(box[0][0], box[1][0]+1):
+                for y in xrange(box[0][1], box[1][1]+1):
+                    cell = (x,y,tab)
+                    if cell not in alreadyToggled:
+                        alreadyToggled.append(cell)
+                        self._change_frozen_attr_single(cell)
+
+    def _change_frozen_attr_single(self, cursor):
+        """Helper for change_frozen_attr.  Changes a single cell at cursor."""
 
         frozen = self.grid.code_array.cell_attributes[cursor]["frozen"]
 
