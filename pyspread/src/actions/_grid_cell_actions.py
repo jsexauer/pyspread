@@ -328,6 +328,7 @@ class CellActions(Actions):
                     if cell not in alreadyToggled:
                         alreadyToggled.append(cell)
                         self._change_frozen_attr_single(cell)
+        self.code_array.unredo.mark()
 
     def _change_frozen_attr_single(self, cursor):
         """Helper for change_frozen_attr.  Changes a single cell at cursor."""
@@ -349,7 +350,8 @@ class CellActions(Actions):
 
         # Set the new frozen state / code
         selection = Selection([], [], [], [], [cursor[:2]])
-        self.set_attr("frozen", not frozen, selection=selection)
+        self.set_attr("frozen", not frozen, selection=selection,
+                      mark_unredo=False)
 
     def unmerge(self, unmerge_area, tab):
         """Unmerges all cells in unmerge_area"""
