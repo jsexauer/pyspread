@@ -335,8 +335,15 @@ class CellActions(Actions):
         dlg = wx.ProgressDialog(title, msg, len(cells), self.main_window, style)
 
         # Do freezing
+        self.grid.BeginBatch()
+        freeze = []
+        unfreeze = []
         for i, cell in enumerate(cells):
-            self._change_frozen_attr_single(cell)
+            # Freeze or unfreeze cell and add to appropriate list
+            if self._change_frozen_attr_single(cell):
+                freeze.append(cell)
+            else:
+                unfreeze.append(cell)
 
             # Update progress
             keep_going, skip = dlg.Update(i)
@@ -346,7 +353,13 @@ class CellActions(Actions):
                                    text=statustext)
                 break
 
-        self.code_array.unredo.mark()
+        # Update attributes
+        selection = Selection([], [], [], [], [a[:2] for a in freeze])
+        self.set_attr("frozen", True, selection=selection, mark_unredo=False)
+        selection = Selection([], [], [], [], [a[:2] for a in unfreeze])
+        self.set_attr("frozen", False, selection=selection)
+
+        self.grid.EndBatch()
         dlg.Destroy()
 
     def _change_frozen_attr_single(self, cursor):
@@ -367,10 +380,8 @@ class CellActions(Actions):
             res_obj = self.grid.code_array[cursor]
             self.grid.code_array.frozen_cache[repr(cursor)] = res_obj
 
-        # Set the new frozen state / code
-        selection = Selection([], [], [], [], [cursor[:2]])
-        self.set_attr("frozen", not frozen, selection=selection,
-                      mark_unredo=False)
+        return not frozen
+
 
     def unmerge(self, unmerge_area, tab):
         """Unmerges all cells in unmerge_area"""
