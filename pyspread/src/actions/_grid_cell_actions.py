@@ -320,15 +320,34 @@ class CellActions(Actions):
             boxes = [( cursor, cursor )]
         tab = self.grid.actions.cursor[2]
 
-        alreadyToggled = []    # Store cells we've already toggled
+        # Figure out what cells we should freeze (edit only once)
+        cells = set()
         for box in boxes:
             for x in xrange(box[0][0], box[1][0]+1):
                 for y in xrange(box[0][1], box[1][1]+1):
-                    cell = (x,y,tab)
-                    if cell not in alreadyToggled:
-                        alreadyToggled.append(cell)
-                        self._change_frozen_attr_single(cell)
+                    cells.add( (x,y,tab) )
+
+        # Create the progress dialog
+        title = _("Freezing Cells")
+        msg = _("Please wait while freezing/unfreezing cells...")
+        style = wx.PD_CAN_ABORT | wx.PD_APP_MODAL #| wx.PD_SMOOTH
+
+        dlg = wx.ProgressDialog(title, msg, len(cells), self.main_window, style)
+
+        # Do freezing
+        for i, cell in enumerate(cells):
+            self._change_frozen_attr_single(cell)
+
+            # Update progress
+            keep_going, skip = dlg.Update(i)
+            if not keep_going:
+                statustext = _("Aborted freezing cells")
+                post_command_event(self.main_window, self.StatusBarMsg,
+                                   text=statustext)
+                break
+
         self.code_array.unredo.mark()
+        dlg.Destroy()
 
     def _change_frozen_attr_single(self, cursor):
         """Helper for change_frozen_attr.  Changes a single cell at cursor."""
