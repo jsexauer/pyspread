@@ -312,20 +312,26 @@ class CellActions(Actions):
     def change_frozen_attr(self):
         """Changes frozen state of cell if there is no selection"""
 
-        if self.grid.selection:
-            boxes = zip(self.grid.selection.block_tl,
-                        self.grid.selection.block_br)
-        else:
-            cursor = self.grid.actions.cursor[:2]
-            boxes = [( cursor, cursor )]
-        tab = self.grid.actions.cursor[2]
-
-        # Figure out what cells we should freeze (edit only once)
+        cursor = self.grid.actions.cursor
+        tab = cursor[2]
+        selection = self.grid.selection
         cells = set()
-        for box in boxes:
-            for x in xrange(box[0][0], box[1][0]+1):
-                for y in xrange(box[0][1], box[1][1]+1):
-                    cells.add( (x,y,tab) )
+
+        # Add cursor, if populated, to cells to evaluate
+        if cursor in self.grid.code_array:
+            cells.add(cursor)
+
+        # Add populated cells in selection to cells to evaluate
+        for key in self.grid.code_array:
+            if key[2] == tab and key[:2] in selection:
+                cells.add(key)
+
+        # Warn if trying to freeze nothing
+        if len(cells) == 0:
+            statustext = _("Empty cell(s) cannot be frozen.")
+            post_command_event(self.main_window, self.StatusBarMsg,
+                               text=statustext)
+            return
 
         # Create the progress dialog
         title = _("Freezing Cells")
@@ -354,12 +360,15 @@ class CellActions(Actions):
                 break
 
         # Update attributes
-        selection = Selection([], [], [], [], [a[:2] for a in freeze])
-        self.set_attr("frozen", True, selection=selection, mark_unredo=False)
-        selection = Selection([], [], [], [], [a[:2] for a in unfreeze])
-        self.set_attr("frozen", False, selection=selection)
+        for (cells, toggle) in zip((freeze, unfreeze), (True, False)):
+            if len(cells) > 0:
+                selection = Selection([], [], [], [], [a[:2] for a in cells])
+                self.set_attr("frozen", toggle,
+                              selection=selection, mark_unredo=False)
 
+        self.code_array.unredo.mark()
         self.grid.EndBatch()
+
         dlg.Destroy()
 
     def _change_frozen_attr_single(self, cursor):
