@@ -1175,7 +1175,9 @@ class CodeArray(DataArray):
 
         else:
             try:
-                result = eval(expression, env, {})
+                #result = eval(expression, env, {})
+                self.eval_manager.add_task(expression, None, key)
+                result = '...'
 
             except AttributeError, err:
                 # Attribute Error includes RunTimeError
@@ -1402,5 +1404,8 @@ class CodeArray(DataArray):
         for key in self._sorted_keys(self.keys(), startkey, reverse=reverse):
             if is_matching(key, find_string, flags):
                 return key
+
+    def set_eval_manager(self, eval_manager):
+        self.eval_manager = eval_manager
 
 # End of class CodeArray

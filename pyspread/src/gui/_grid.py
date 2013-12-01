@@ -45,6 +45,7 @@ from src.sysvars import is_gtk
 
 import src.lib.xrect as xrect
 from src.model.model import CodeArray
+from src.model.eval_manager import EvalManager
 
 from src.actions._grid_actions import AllGridActions
 
@@ -103,6 +104,11 @@ class Grid(wx.grid.Grid, EventMixin):
 
         # Grid actions
         self.actions = AllGridActions(self)
+
+        # Evaluation Manager
+        self.code_array.set_eval_manager(
+            EvalManager(self, self.handlers.OnEvalResult,
+                        self.handlers.OnEvalError))
 
         # Layout and bindings
         self._layout()
@@ -771,14 +777,27 @@ class GridCellEventHandlers(object):
 
         event.Skip()
 
-
-class GridEventHandlers(object):
-    """Contains grid event handlers"""
+class EvalManagerEventHandlersMixin(object):
+    """Actions for updating based on the evaluation manager"""
 
     def __init__(self, grid):
         self.grid = grid
         self.interfaces = grid.interfaces
         self.main_window = grid.main_window
+
+    def OnEvalResult(self, result):
+        key = result.task.key
+        self.grid.code_array.result_cache[repr(key)] = result.msg
+        self.grid.ForceRefresh()
+        #wx.MessageBox("OnEvalResult: %s"% result)
+
+    def OnEvalError(self, msg):
+        from src.model.eval_manager import  MsgTypes
+        if msg.type not in (MsgTypes.STARTED, MsgTypes.FINISHED ):
+            wx.MessageBox("OnEvalError: %s"% msg)
+
+class GridEventHandlers(EvalManagerEventHandlersMixin):
+    """Contains grid event handlers"""
 
     def OnMouseMotion(self, event):
         """Mouse motion event handler"""
