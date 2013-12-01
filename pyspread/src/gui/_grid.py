@@ -793,6 +793,7 @@ class EvalManagerEventHandlersMixin(object):
 
     def OnEvalError(self, msg):
         from src.model.eval_manager import  MsgTypes
+
         if msg.type not in (MsgTypes.STARTED, MsgTypes.FINISHED ):
             wx.MessageBox("OnEvalError: %s"% msg)
 
