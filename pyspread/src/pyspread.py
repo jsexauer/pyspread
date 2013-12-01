@@ -195,6 +195,9 @@ class MainApplication(wx.App, GridActionEventMixin):
                                attr={"filepath": self.filepath})
             self.main_window.filepath = self.filepath
 
+        # Begin listening for cells to evaluate
+        self.main_window.grid.code_array.eval_manager.process_tasks()
+
         return True
 
     def get_cmd_args(self):

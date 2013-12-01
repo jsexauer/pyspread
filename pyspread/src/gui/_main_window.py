@@ -465,6 +465,9 @@ class MainWindowEventHandlers(EventMixin):
             dummyfile.close()
             os.chmod(pyspreadrc_path, 0600)
 
+        # Terminate the evaluation manager
+        self.main_window.grid.code_array.eval_manager.terminate(no_restart=True)
+
     # Preferences events
 
     def OnPreferences(self, event):
