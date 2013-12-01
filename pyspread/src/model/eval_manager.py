@@ -118,27 +118,28 @@ class Worker(multiprocessing.Process):
     def run(self):
         while True:
             # Perform a task off of the queue
-            next_task = self.task_queue.get()
-            self.sign(next_task)
-            if next_task is None:
-                # Poison pill means we should exit
-                self.msg_queue.put(PrMsg('Taking Poison Pill'))
-                break
+            tasks = self.task_queue.get()
+            for next_task in tasks:
+                self.sign(next_task)
+                if next_task is None:
+                    # Poison pill means we should exit
+                    self.msg_queue.put(PrMsg('Taking Poison Pill'))
+                    break
 
-            self.msg_queue.put(PrMsg('', MsgTypes.STARTED))
-            try:
-                answer = next_task(self.msg_queue)
-            except:
-                # The main task didn't execute.  Report an error
-                s = StringIO()
-                print_exception(sys.exc_info()[0], sys.exc_info()[1],
-                                sys.exc_info()[2], None, s)
-                answer = "ERROR: " + s.getvalue()
-                self.msg_queue.put(PrMsg(answer, MsgTypes.USER_ERROR))
-            else:
-                self.result_queue.put(PrMsg(answer, MsgTypes.RESULT))
-            self.msg_queue.put(PrMsg('', MsgTypes.FINISHED))
-            self.unsign()
+                self.msg_queue.put(PrMsg('', MsgTypes.STARTED))
+                try:
+                    answer = next_task(self.msg_queue)
+                except:
+                    # The main task didn't execute.  Report an error
+                    s = StringIO()
+                    print_exception(sys.exc_info()[0], sys.exc_info()[1],
+                                    sys.exc_info()[2], None, s)
+                    answer = "ERROR: " + s.getvalue()
+                    self.msg_queue.put(PrMsg(answer, MsgTypes.USER_ERROR))
+                else:
+                    self.result_queue.put(PrMsg(answer, MsgTypes.RESULT))
+                self.msg_queue.put(PrMsg('', MsgTypes.FINISHED))
+                self.unsign()
         return
 
 class Task(object):
@@ -237,12 +238,39 @@ class QueuePipe(object):
 
     def get_nowait(self):
         if self.recv.poll():
-            return self.recv.recv()
+            return self.get()
         else:
             raise QueueEmpty
 
     def put(self, obj, block=None, timeout=None):
         self.send.send(obj)
+
+class BufferedQueuePipe(QueuePipe):
+    def __init__(self):
+        super(BufferedQueuePipe, self).__init__()
+        self.put_buffer = []
+        self.get_buffer = []
+    def put(self, obj, block=None, timeout=None):
+        self.put_buffer.append(obj)
+        if len(self.put_buffer) > 10:
+            super(BufferedQueuePipe, self).put(self.put_buffer)
+            self.put_buffer = []
+
+    def get_nowait(self):
+        if len(self.get_buffer) > 0:
+            return self.get_buffer.pop()
+        else:
+            self.get_buffer = super(BufferedQueuePipe, self).get_nowait()
+            return self.get_buffer.pop()
+    '''
+    def get(self):
+        while True:
+            try:
+                a = self.get_nowait()
+                return a
+            except QueueEmpty:
+                pass
+    '''
 
 
 
@@ -259,8 +287,8 @@ class EvalManager(object):
         self.OnError = OnError
 
 
-        self.task_queue = QueuePipe()
-        self.result_queue = QueuePipe()
+        self.task_queue = BufferedQueuePipe()
+        self.result_queue = BufferedQueuePipe()
         self.message_queue = FakeQueuePipe()
 
         self.num_workers = 1
@@ -362,6 +390,7 @@ class EvalManager(object):
 
     def _process_tasks_progress_dialog(self):
         """Helper function to manage the progress dialog"""
+        return
         progress = self.progress
         if self.num_jobs == 0:
             self.last_idle = time.time()
