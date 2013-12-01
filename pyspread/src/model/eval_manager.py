@@ -102,7 +102,7 @@ class Worker(multiprocessing.Process):
                 assert isinstance(msg, PrMsg)
                 msg.worker = self.worker.name
                 msg.task = self.task
-                msg.log()
+                #msg.log()
                 return self.orig_put(msg, block, timeout)
 
         # Wrap the message queue's put function
@@ -218,6 +218,32 @@ class TaskList(list):
         return [self[t.id] for t in self._meta_tasks
                     if t.status == TaskStatus.QUEUED]
 
+class FakeQueuePipe(object):
+    def recv(self):
+        while True: pass
+    def poll(self):
+        pass
+    def put(self,*args):
+        pass
+    def get_nowait(self):
+        raise QueueEmpty
+
+class QueuePipe(object):
+    def __init__(self):
+        self.recv, self.send = multiprocessing.Pipe(duplex=False)
+
+    def get(self):
+        return self.recv.recv()
+
+    def get_nowait(self):
+        if self.recv.poll():
+            return self.recv.recv()
+        else:
+            raise QueueEmpty
+
+    def put(self, obj, block=None, timeout=None):
+        self.send.send(obj)
+
 
 
 
@@ -233,9 +259,9 @@ class EvalManager(object):
         self.OnError = OnError
 
 
-        self.task_queue = Queue()
-        self.result_queue = Queue()
-        self.message_queue = Queue()
+        self.task_queue = QueuePipe()
+        self.result_queue = QueuePipe()
+        self.message_queue = FakeQueuePipe()
 
         self.num_workers = 1
         self.last_idle = time.time()
