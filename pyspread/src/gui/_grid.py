@@ -107,7 +107,7 @@ class Grid(wx.grid.Grid, EventMixin):
 
         # Evaluation Manager
         self.code_array.set_eval_manager(
-            EvalManager(self, self.handlers.OnEvalResult,
+            EvalManager(self.main_window, self.handlers.OnEvalResult,
                         self.handlers.OnEvalError))
 
         # Layout and bindings
