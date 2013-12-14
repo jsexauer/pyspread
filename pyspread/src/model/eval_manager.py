@@ -89,7 +89,6 @@ class Worker(multiprocessing.Process):
         multiprocessing.Process.__init__(self)
         self.task_queue = task_queue
         self.output_queue = output_queue
-        self.log = []
 
     def sign(self, next_task):
         """Sign all messages as coming from this worker performing this task"""
@@ -116,9 +115,7 @@ class Worker(multiprocessing.Process):
     def run(self):
         while True:
             # Perform a task off of the queue
-            self.log.append("%s\t Waiting for a task..." % time.time())
             next_task = self.task_queue.get()
-            self.log.append("%s\t Got task %s" % (time.time(), next_task))
             self.sign(next_task)
             if next_task is None:
                 # Poison pill means we should exit
@@ -126,7 +123,6 @@ class Worker(multiprocessing.Process):
                 break
 
             self.output_queue.put(PrMsg('', MsgTypes.STARTED))
-            self.log.append("%s\t Started task %s" % (time.time(), next_task))
             try:
                 answer = next_task(self.output_queue)
             except:
@@ -137,17 +133,10 @@ class Worker(multiprocessing.Process):
                 answer = "ERROR: " + s.getvalue()
                 answer = PrMsg(answer, MsgTypes.USER_ERROR)
             else:
-                self.log.append("%s\t Put result for task %s on result queue" %
-                                (time.time(), next_task))
                 answer = PrMsg(answer, MsgTypes.RESULT)
             self.output_queue.put(PrMsg('', MsgTypes.FINISHED))
             self.output_queue.put(answer)
             self.unsign()
-            self.log.append("%s\t WORKER Writing log" % time.time())
-            f = open(r"C:\log.txt", 'a')
-            f.write('\n'+'\n'.join(self.log)+'\n')
-            f.close()
-            self.log = []
         return
 
 class Task(object):
@@ -168,7 +157,7 @@ class Task(object):
 
     def __call__(self, output_queue):
         """Evaluate the user's code"""
-        time.sleep(1)
+        #time.sleep(1)
         answer = eval(self.code, self.env, {})
         return answer
 
@@ -272,8 +261,6 @@ class EvalManager(object):
         self.keep_going = True
         self.in_batch = False
 
-        self.log = []
-
         self.workers = []
         self.start_workers()
 
@@ -300,7 +287,6 @@ class EvalManager(object):
             self.in_batch = True
             # Make sure process_queues is called
             wx.PostEvent(self.main_window,wx.IdleEvent())
-        self.log.append("%s\t Placed task %s on queue" % (time.time(), task))
         return task.id
 
     def terminate(self, no_restart=False):
@@ -332,10 +318,6 @@ class EvalManager(object):
 
         # Start the workers back up again (for next set of evals)
         if no_restart:
-            self.log.append("%s\t EVAL_MANAGER Writing log" % time.time())
-            f = open(r"C:\log.txt", 'a')
-            f.write('\n'+'\n'.join(self.log)+'\n')
-            f.close()
             self.workers = []
         else:
             self.start_workers()
@@ -345,7 +327,6 @@ class EvalManager(object):
 
     def process_queues(self, event):
         """Evoke during idle event of main window to read output queues"""
-        self.log.append("%s\t {{Top of Loop" % time.time())
         while self.keep_going:
             try:
                 msg = self.output_queue.get_nowait()
@@ -363,8 +344,6 @@ class EvalManager(object):
                     self.tasks.mark(msg.task, TaskStatus.EVALUATED)
                 elif msg.type == MsgTypes.RESULT:
                     # Display result
-                    self.log.append("%s\t Pulled result for %s off queue" %
-                                    (time.time(), msg.task))
                     self.OnResult(msg, doRefresh=self.num_jobs>0)
                     self.tasks.mark(msg.task, TaskStatus.DISPLAYED)
                 else:
@@ -380,7 +359,6 @@ class EvalManager(object):
             # Make sure we're run at least one more time
             event.RequestMore()
 
-        self.log.append("%s\t }}Yielding" % time.time())
         event.Skip()
 
     def _update_progress_dialog(self):
@@ -409,10 +387,6 @@ class EvalManager(object):
                 self.terminate()
                 self.progress.Destroy()
                 self.progress = None
-        self.log.append("%s\t " % time.time() +
-                        str(self.tasks).replace('\n',"\n%s\t " % time.time()))
-        self.log.append("%s\t NotFin: %s" % (time.time(),
-                                          self.tasks.jobs_not_finished))
 
     def EndBatch(self):
         assert self.task_queue.qsize() == 0
