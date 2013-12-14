@@ -81,15 +81,14 @@ class PrMsg(object):
 
 
 class Worker(multiprocessing.Process):
-    def __init__(self, task_queue, result_queue, msg_queue):
+    def __init__(self, task_queue, output_queue):
         """
         Worker which performs tasks from the task queue, post the results to
         the results queue and send status and error messages on the msg queue
         """
         multiprocessing.Process.__init__(self)
         self.task_queue = task_queue
-        self.result_queue = result_queue
-        self.msg_queue = msg_queue
+        self.output_queue = output_queue
         self.log = []
 
     def sign(self, next_task):
@@ -107,14 +106,12 @@ class Worker(multiprocessing.Process):
                 return self.orig_put(msg, block, timeout)
 
         # Wrap the message queue's put function
-        self.msg_queue.put = put_wrapper(self.msg_queue.put, self, next_task)
-        self.result_queue.put = put_wrapper(self.result_queue.put, self,
+        self.output_queue.put = put_wrapper(self.output_queue.put, self,
                                             next_task)
 
     def unsign(self):
         # Unwrap the message queue's put function
-        self.msg_queue.put = self.msg_queue.put.orig_put
-        self.result_queue.put = self.result_queue.put.orig_put
+        self.output_queue.put = self.output_queue.put.orig_put
 
     def run(self):
         while True:
@@ -125,25 +122,26 @@ class Worker(multiprocessing.Process):
             self.sign(next_task)
             if next_task is None:
                 # Poison pill means we should exit
-                self.msg_queue.put(PrMsg('Taking Poison Pill'))
+                self.output_queue.put(PrMsg('Taking Poison Pill'))
                 break
 
-            self.msg_queue.put(PrMsg('', MsgTypes.STARTED))
+            self.output_queue.put(PrMsg('', MsgTypes.STARTED))
             self.log.append("%s\t Started task %s" % (time.time(), next_task))
             try:
-                answer = next_task(self.msg_queue)
+                answer = next_task(self.output_queue)
             except:
                 # The main task didn't execute.  Report an error
                 s = StringIO()
                 print_exception(sys.exc_info()[0], sys.exc_info()[1],
                                 sys.exc_info()[2], None, s)
                 answer = "ERROR: " + s.getvalue()
-                self.msg_queue.put(PrMsg(answer, MsgTypes.USER_ERROR))
+                answer = PrMsg(answer, MsgTypes.USER_ERROR)
             else:
                 self.log.append("%s\t Put result for task %s on result queue" %
                                 (time.time(), next_task))
-                self.result_queue.put(PrMsg(answer, MsgTypes.RESULT))
-            self.msg_queue.put(PrMsg('', MsgTypes.FINISHED))
+                answer = PrMsg(answer, MsgTypes.RESULT)
+            self.output_queue.put(PrMsg('', MsgTypes.FINISHED))
+            self.output_queue.put(answer)
             self.unsign()
             self.log.append("%s\t WORKER Writing log" % time.time())
             f = open(r"C:\log.txt", 'a')
@@ -168,9 +166,9 @@ class Task(object):
 
     __repr__ = __str__
 
-    def __call__(self, msg_queue):
+    def __call__(self, output_queue):
         """Evaluate the user's code"""
-        time.sleep(1)
+        #time.sleep(1)
         answer = eval(self.code, self.env, {})
         return answer
 
@@ -317,8 +315,7 @@ class EvalManager(object):
 
 
         self.task_queue = multiprocessing.Queue()
-        self.result_queue = multiprocessing.Queue()
-        self.message_queue = multiprocessing.Queue()
+        self.output_queue = multiprocessing.Queue()
 
         self.num_workers = 1
         self.last_idle = time.time()
@@ -343,8 +340,7 @@ class EvalManager(object):
         # Start up the workers
         self.workers = []
         for i in xrange(self.num_workers):
-            w = Worker(self.task_queue, self.result_queue,
-                               self.message_queue)
+            w = Worker(self.task_queue, self.output_queue)
             w.start()
             self.workers.append(w)
 
@@ -374,7 +370,7 @@ class EvalManager(object):
             time.sleep(0.1)
 
         # Empty the queues
-        for q in (self.message_queue, self.task_queue, self.result_queue):
+        for q in (self.task_queue, self.output_queue):
             while True:
                 try:
                     trash = q.get_nowait()
@@ -398,59 +394,47 @@ class EvalManager(object):
         busy.Destroy()
 
     def process_queues(self, event):
-        """Evoke during idle event of main window to read result and
-        message queues"""
-        if self.keep_going:
-            self.log.append("%s\t {{Top of Loop" % time.time())
-            # Pull one result off queue
-            numQueueEmpty = 0
-            while numQueueEmpty < 2 and self.keep_going:
-                numQueueEmpty = 0
-                # Pull everything off message queue
-                while True:
-                    try:
-                        msg = self.message_queue.get_nowait()
-                    except QueueEmpty:
-                        numQueueEmpty += 1
-                        break
-                    else:
-                        if msg.type == MsgTypes.STARTED:
-                            self.tasks.mark(msg.task, TaskStatus.IN_PROCESSING)
-                        elif msg.type == MsgTypes.FINISHED:
-                            self.tasks.mark(msg.task, TaskStatus.EVALUATED)
-                        else:
-                            self.OnError(msg)
-                            self.tasks.mark(msg.task, TaskStatus.DISPLAYED)
-                # Pull a single result off the result queue
-                try:
-                    res = self.result_queue.get_nowait()
-                except QueueEmpty:
-                    numQueueEmpty += 1
+        """Evoke during idle event of main window to read output queues"""
+        self.log.append("%s\t {{Top of Loop" % time.time())
+        while self.keep_going:
+            try:
+                msg = self.output_queue.get_nowait()
+            except QueueEmpty:
+                break   # Break out of loop and yield back to wx
+            else:
+                if msg.type == MsgTypes.STARTED:
+                    # Mark task started
+                    self.tasks.mark(msg.task, TaskStatus.IN_PROCESSING)
+                elif msg.type == MsgTypes.FINISHED:
+                    # Mark task finished
+                    self.tasks.mark(msg.task, TaskStatus.EVALUATED)
+                elif msg.type == MsgTypes.RESULT:
+                    # Display result
+                    self.log.append("%s\t Pulled result for %s off queue" %
+                                    (time.time(), msg.task))
+                    self.OnResult(msg, doRefresh=self.num_jobs>0)
+                    self.tasks.mark(msg.task, TaskStatus.DISPLAYED)
                 else:
-                    assert res.type == MsgTypes.RESULT
-                    self.log.append("%s\t Got a result for %s off result queue" %
-                                    (time.time(), res.task))
-                    self.OnResult(res, doRefresh=self.num_jobs>0)
-                    self.tasks.mark(res.task, TaskStatus.DISPLAYED)
+                    self.OnError(msg)
+                    self.tasks.mark(msg.task, TaskStatus.DISPLAYED)
+                # See if we've finished this batch of tasks
+                if self.tasks.num_not_finished == 0:
+                    self.EndBatch()
                 # Update progress dialog
-                self._process_tasks_progress_dialog()
+                self._update_progress_dialog()
 
-            self.log.append("%s\t }}Yielding" % time.time())
+        self.log.append("%s\t }}Yielding" % time.time())
+        event.Skip()
 
-    def _process_tasks_progress_dialog(self):
+    def _update_progress_dialog(self):
         """Helper function to manage the progress dialog"""
         progress = self.progress
-        if self.tasks.num_not_finished == 0:
-            if self.in_batch:
-                # First time we've left the batch...maybe
-                self.EndBatch()
-            if not self.in_batch:
-                # See self.EndBatch for why this can't just be an else
-                self.last_idle = time.time()
-                if progress is not None:
-                    progress.Destroy()
-                    progress = None
-        if self.last_idle + 3 < time.time():
+        if not self.in_batch:
+            self.last_idle = time.time()
+            if progress is not None:
+                progress.Destroy()
+                progress = None
+        elif self.last_idle + 3 < time.time():
             # Update progress dialog
             msg = ("Currently evaluating: %s \n"
                    "Jobs left to be evaluated: %d; "
@@ -476,16 +460,12 @@ class EvalManager(object):
                                           self.tasks.jobs_not_finished))
 
     def EndBatch(self):
-        if (self.task_queue.qsize() == 0 and
-                self.result_queue.qsize() == 0 and
-                self.message_queue.qsize() == 0 and
-                self.tasks.num_not_finished == 0):
-            self.tasks = TaskList() # Empty the task list
-            self.OnFinishBatch()    # Call for grid referesh
-            self.in_batch = False
-        else:
-            self.in_batch = True
-
+        assert self.task_queue.qsize() == 0
+        assert self.output_queue.qsize() == 0
+        assert self.tasks.num_not_finished == 0
+        self.tasks = TaskList() # Empty the task list
+        self.OnFinishBatch()    # Call for grid referesh
+        self.in_batch = False
 
     def __del__(self):
         self.terminate()
