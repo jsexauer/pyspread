@@ -245,61 +245,6 @@ class TaskList(list):
         return '[' + ',\n '.join([str(self[a.id])+'@'+str(a.status)
                          for a in self._meta_tasks]) + ']'
 
-class FakeQueuePipe(object):
-    def recv(self):
-        while True: pass
-    def poll(self):
-        pass
-    def put(self,*args):
-        pass
-    def get_nowait(self):
-        raise QueueEmpty
-
-class QueuePipe(object):
-    def __init__(self):
-        self.recv, self.send = multiprocessing.Pipe(duplex=False)
-
-    def get(self):
-        return self.recv.recv()
-
-    def get_nowait(self):
-        if self.recv.poll():
-            return self.get()
-        else:
-            raise QueueEmpty
-
-    def put(self, obj, block=None, timeout=None):
-        self.send.send(obj)
-
-class BufferedQueuePipe(QueuePipe):
-    def __init__(self):
-        super(BufferedQueuePipe, self).__init__()
-        self.put_buffer = []
-        self.get_buffer = []
-    def put(self, obj, block=None, timeout=None):
-        self.put_buffer.append(obj)
-        if len(self.put_buffer) > 10:
-            super(BufferedQueuePipe, self).put(self.put_buffer)
-            self.put_buffer = []
-
-    def get_nowait(self):
-        if len(self.get_buffer) > 0:
-            return self.get_buffer.pop()
-        else:
-            self.get_buffer = super(BufferedQueuePipe, self).get_nowait()
-            return self.get_buffer.pop()
-    '''
-    def get(self):
-        while True:
-            try:
-                a = self.get_nowait()
-                return a
-            except QueueEmpty:
-                pass
-    '''
-
-
-
 
 class EvalManager(object):
     def __init__(self, main_window, OnResult, OnError, OnFinishBatch):
