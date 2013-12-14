@@ -90,6 +90,7 @@ class Worker(multiprocessing.Process):
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.msg_queue = msg_queue
+        self.log = []
 
     def sign(self, next_task):
         """Sign all messages as coming from this worker performing this task"""
@@ -118,28 +119,37 @@ class Worker(multiprocessing.Process):
     def run(self):
         while True:
             # Perform a task off of the queue
-            tasks = self.task_queue.get()
-            for next_task in tasks:
-                self.sign(next_task)
-                if next_task is None:
-                    # Poison pill means we should exit
-                    self.msg_queue.put(PrMsg('Taking Poison Pill'))
-                    break
+            self.log.append("%s\t Waiting for a task..." % time.time())
+            next_task = self.task_queue.get()
+            self.log.append("%s\t Got task %s" % (time.time(), next_task))
+            self.sign(next_task)
+            if next_task is None:
+                # Poison pill means we should exit
+                self.msg_queue.put(PrMsg('Taking Poison Pill'))
+                break
 
-                self.msg_queue.put(PrMsg('', MsgTypes.STARTED))
-                try:
-                    answer = next_task(self.msg_queue)
-                except:
-                    # The main task didn't execute.  Report an error
-                    s = StringIO()
-                    print_exception(sys.exc_info()[0], sys.exc_info()[1],
-                                    sys.exc_info()[2], None, s)
-                    answer = "ERROR: " + s.getvalue()
-                    self.msg_queue.put(PrMsg(answer, MsgTypes.USER_ERROR))
-                else:
-                    self.result_queue.put(PrMsg(answer, MsgTypes.RESULT))
-                self.msg_queue.put(PrMsg('', MsgTypes.FINISHED))
-                self.unsign()
+            self.msg_queue.put(PrMsg('', MsgTypes.STARTED))
+            self.log.append("%s\t Started task %s" % (time.time(), next_task))
+            try:
+                answer = next_task(self.msg_queue)
+            except:
+                # The main task didn't execute.  Report an error
+                s = StringIO()
+                print_exception(sys.exc_info()[0], sys.exc_info()[1],
+                                sys.exc_info()[2], None, s)
+                answer = "ERROR: " + s.getvalue()
+                self.msg_queue.put(PrMsg(answer, MsgTypes.USER_ERROR))
+            else:
+                self.log.append("%s\t Put result for task %s on result queue" %
+                                (time.time(), next_task))
+                self.result_queue.put(PrMsg(answer, MsgTypes.RESULT))
+            self.msg_queue.put(PrMsg('', MsgTypes.FINISHED))
+            self.unsign()
+            self.log.append("%s\t WORKER Writing log" % time.time())
+            f = open(r"C:\log.txt", 'a')
+            f.write('\n'+'\n'.join(self.log)+'\n')
+            f.close()
+            self.log = []
         return
 
 class Task(object):
@@ -287,9 +297,9 @@ class EvalManager(object):
         self.OnError = OnError
 
 
-        self.task_queue = BufferedQueuePipe()
-        self.result_queue = BufferedQueuePipe()
-        self.message_queue = FakeQueuePipe()
+        self.task_queue = multiprocessing.Queue()
+        self.result_queue = multiprocessing.Queue()
+        self.message_queue = multiprocessing.Queue()
 
         self.num_workers = 1
         self.last_idle = time.time()
@@ -299,6 +309,8 @@ class EvalManager(object):
 
         # Flags
         self.keep_going = True
+
+        self.log = []
 
         self.start_workers()
 
@@ -320,6 +332,7 @@ class EvalManager(object):
         task = Task(code, env, key)
         self.tasks.append(task)
         self.task_queue.put(task)
+        self.log.append("%s\t Placed task %s on queue" % (time.time(), task))
         return task.id
 
     def terminate(self, no_restart=False):
@@ -354,6 +367,10 @@ class EvalManager(object):
             self.start_workers()
             self.process_tasks()
         else:
+            self.log.append("%s\t EVAL_MANAGER Writing log" % time.time())
+            f = open(r"C:\log.txt", 'a')
+            f.write('\n'+'\n'.join(self.log)+'\n')
+            f.close()
             self.workers = []
 
         busy.Destroy()
@@ -362,6 +379,7 @@ class EvalManager(object):
         """Once evoked, runs continuously to read result and message queues"""
         self.keep_going = True
         while self.keep_going:
+            self.log.append("%s\t {{Top of Loop" % time.time())
             # Pull off results queue
             try:
                 res = self.result_queue.get_nowait()
@@ -369,6 +387,8 @@ class EvalManager(object):
                 pass
             else:
                 assert res.type == MsgTypes.RESULT
+                self.log.append("%s\t Got a result for %s off result queue" %
+                                (time.time(), res.task))
                 self.OnResult(res)
 
             # Pull off message queue
@@ -386,6 +406,7 @@ class EvalManager(object):
             # Update progress dialog
             self._process_tasks_progress_dialog()
 
+            self.log.append("%s\t }}Yielding" % time.time())
             wx.YieldIfNeeded()
 
     def _process_tasks_progress_dialog(self):

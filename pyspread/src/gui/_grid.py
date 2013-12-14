@@ -48,6 +48,7 @@ from src.model.model import CodeArray
 from src.model.eval_manager import EvalManager
 
 from src.actions._grid_actions import AllGridActions
+import time
 
 #use ugettext instead of getttext to avoid unicode errors
 _ = i18n.language.ugettext
@@ -789,6 +790,9 @@ class EvalManagerEventHandlersMixin(object):
         key = result.task.key
         self.grid.code_array.result_cache[repr(key)] = result.msg
         self.grid.ForceRefresh()
+        self.main_window.log.append(
+                        "%s\t Got task to display: %s on %s" %
+                        (time.time(), result.msg, key))
         #wx.MessageBox("OnEvalResult: %s"% result)
 
     def OnEvalError(self, msg):

@@ -59,6 +59,7 @@ import src.lib.charts as charts
 from src.sysvars import get_color, get_font_string
 
 from unredo import UnRedo
+import time
 
 
 class KeyValueStore(dict):
@@ -1174,9 +1175,13 @@ class CodeArray(DataArray):
             result = assignment_target_error
 
         else:
+            import time
             try:
                 #result = eval(expression, env, {})
                 self.eval_manager.add_task(expression, None, key)
+                self.eval_manager.main_window.log.append(
+                        "%s\t Adding task to queue: %s on %s" %
+                        (time.time(), expression, key))
                 result = '...'
 
             except AttributeError, err:

@@ -55,6 +55,7 @@ from _grid import Grid
 from _events import post_command_event, EventMixin
 
 from src.actions._main_window_actions import AllMainWindowActions
+import time
 
 #use ugettext instead of getttext to avoid unicode errors
 _ = i18n.language.ugettext
@@ -142,6 +143,8 @@ class MainWindow(wx.Frame, EventMixin):
         self._set_properties()
         self._do_layout()
         self._bind()
+
+        self.log = []
 
     def _states(self):
         """Sets main window states"""
@@ -466,6 +469,10 @@ class MainWindowEventHandlers(EventMixin):
             os.chmod(pyspreadrc_path, 0600)
 
         # Terminate the evaluation manager
+        self.main_window.log.append("%s\t MAIN_WINDOW Writing log" % time.time())
+        f = open(r"C:\log.txt", 'a')
+        f.write('\n'+'\n'.join(self.main_window.log)+'\n')
+        f.close()
         self.main_window.grid.code_array.eval_manager.terminate(no_restart=True)
 
     # Preferences events
