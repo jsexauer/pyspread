@@ -168,7 +168,7 @@ class Task(object):
 
     def __call__(self, output_queue):
         """Evaluate the user's code"""
-        #time.sleep(1)
+        time.sleep(1)
         answer = eval(self.code, self.env, {})
         return answer
 
@@ -294,7 +294,12 @@ class EvalManager(object):
         task = Task(code, env, key)
         self.tasks.append(task)
         self.task_queue.put(task)
-        self.in_batch = True
+        if not self.in_batch:
+            # Starting a new batch
+            self.last_idle = time.time()
+            self.in_batch = True
+            # Make sure process_queues is called
+            wx.PostEvent(self.main_window,wx.IdleEvent())
         self.log.append("%s\t Placed task %s on queue" % (time.time(), task))
         return task.id
 
@@ -345,6 +350,9 @@ class EvalManager(object):
             try:
                 msg = self.output_queue.get_nowait()
             except QueueEmpty:
+                #if self.tasks.num_not_finished > 0:
+                #    # Make sure we're run at least one more time
+                #    wx.PostEvent(self.main_window,wx.IdleEvent())
                 break   # Break out of loop and yield back to wx
             else:
                 if msg.type == MsgTypes.STARTED:
@@ -368,17 +376,20 @@ class EvalManager(object):
                 # Update progress dialog
                 self._update_progress_dialog()
 
+        if self.tasks.num_not_finished > 0:
+            # Make sure we're run at least one more time
+            event.RequestMore()
+
         self.log.append("%s\t }}Yielding" % time.time())
         event.Skip()
 
     def _update_progress_dialog(self):
         """Helper function to manage the progress dialog"""
-        progress = self.progress
         if not self.in_batch:
             self.last_idle = time.time()
-            if progress is not None:
-                progress.Destroy()
-                progress = None
+            if self.progress is not None:
+                self.progress.Destroy()
+                self.progress = None
         elif self.last_idle + 3 < time.time():
             # Update progress dialog
             msg = ("Currently evaluating: %s \n"
@@ -386,19 +397,18 @@ class EvalManager(object):
                    "Jobs left to be displayed: %d")
             msg = msg % (self.tasks.jobs_in_processing, self.num_jobs,
                          self.tasks.num_not_finished)
-            if progress is None:
+            if self.progress is None:
                 # Create the progress dialog
                 title = "Working"
                 style = wx.PD_CAN_ABORT | wx.PD_APP_MODAL | wx.PD_SMOOTH
 
-                progress = wx.ProgressDialog(title, msg, 1,
+                self.progress = wx.ProgressDialog(title, msg, 1,
                                              self.main_window, style)
-            keep_going, skip = progress.Pulse(msg)
+            keep_going, skip = self.progress.Pulse(msg)
             if not keep_going:
                 self.terminate()
-                progress.Destroy()
-                progress = None
-        self.progress = progress
+                self.progress.Destroy()
+                self.progress = None
         self.log.append("%s\t " % time.time() +
                         str(self.tasks).replace('\n',"\n%s\t " % time.time()))
         self.log.append("%s\t NotFin: %s" % (time.time(),
