@@ -109,7 +109,8 @@ class Grid(wx.grid.Grid, EventMixin):
         # Evaluation Manager
         self.code_array.set_eval_manager(
             EvalManager(self.main_window, self.handlers.OnEvalResult,
-                        self.handlers.OnEvalError))
+                        self.handlers.OnEvalError,
+                        self.handlers.OnFinishedBatch))
 
         # Layout and bindings
         self._layout()
@@ -786,13 +787,14 @@ class EvalManagerEventHandlersMixin(object):
         self.interfaces = grid.interfaces
         self.main_window = grid.main_window
 
-    def OnEvalResult(self, result):
+    def OnEvalResult(self, result, doRefresh=True):
         key = result.task.key
         self.grid.code_array.result_cache[repr(key)] = result.msg
-        self.grid.ForceRefresh()
         self.main_window.log.append(
                         "%s\t Got task to display: %s on %s" %
                         (time.time(), result.msg, key))
+        if doRefresh:
+            self.grid.ForceRefresh()
         #wx.MessageBox("OnEvalResult: %s"% result)
 
     def OnEvalError(self, msg):
@@ -800,6 +802,10 @@ class EvalManagerEventHandlersMixin(object):
 
         if msg.type not in (MsgTypes.STARTED, MsgTypes.FINISHED ):
             wx.MessageBox("OnEvalError: %s"% msg)
+
+    def OnFinishedBatch(self):
+        self.grid.ForceRefresh()
+        self.grid.main_window.log.append('%s\t FinishedBatch' % time.time())
 
 class GridEventHandlers(EvalManagerEventHandlersMixin):
     """Contains grid event handlers"""

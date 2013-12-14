@@ -164,18 +164,18 @@ class Task(object):
         if len(code) > 10:
             code = code[:8] + "..."
 
-        return "eval(%s) for cell %s" % (code, self.key)
+        return "<eval(%s) for cell %s>" % (code, self.key)
 
     __repr__ = __str__
 
     def __call__(self, msg_queue):
         """Evaluate the user's code"""
-        #time.sleep(1)
+        time.sleep(1)
         answer = eval(self.code, self.env, {})
         return answer
 
 class TaskStatus(object):
-    QUEUED, IN_PROCESSING, COMPLETED = range(3)
+    QUEUED, IN_PROCESSING, EVALUATED, DISPLAYED = range(4)
     CANCELED = 10
 class TaskMetadata(object):
     def __init__(self, id, status):
@@ -207,6 +207,11 @@ class TaskList(list):
             task_id = task
         else:
             raise TypeError
+        # Never allow us to jump more than one status for all "normal
+        #   marks" (ie, not canceles)
+        cur_status = self._meta_tasks[task_id].status
+        if status < TaskStatus.CANCELED:
+            assert status - cur_status == 1
         self._meta_tasks[task_id].status = status
 
     def cancel_outstanding(self):
@@ -220,6 +225,10 @@ class TaskList(list):
         return len(self.jobs_in_queue)
 
     @property
+    def num_not_finished(self):
+        return len(self.jobs_not_finished)
+
+    @property
     def jobs_in_processing(self):
         return [self[t.id] for t in self._meta_tasks
                 if t.status == TaskStatus.IN_PROCESSING]
@@ -228,6 +237,15 @@ class TaskList(list):
     def jobs_in_queue(self):
         return [self[t.id] for t in self._meta_tasks
                     if t.status == TaskStatus.QUEUED]
+
+    @property
+    def jobs_not_finished(self):
+        return [self[t.id] for t in self._meta_tasks
+                    if t.status < TaskStatus.DISPLAYED]
+
+    def __str__(self):
+        return '[' + ',\n '.join([str(self[a.id])+'@'+str(a.status)
+                         for a in self._meta_tasks]) + ']'
 
 class FakeQueuePipe(object):
     def recv(self):
@@ -286,7 +304,7 @@ class BufferedQueuePipe(QueuePipe):
 
 
 class EvalManager(object):
-    def __init__(self, main_window, OnResult, OnError):
+    def __init__(self, main_window, OnResult, OnError, OnFinishBatch):
         """Manages workers and queues for user created code being executed
         or evaluated in spreadsheet cells and macros.
 
@@ -295,6 +313,7 @@ class EvalManager(object):
         self.main_window = main_window
         self.OnResult = OnResult
         self.OnError = OnError
+        self.OnFinishBatch = OnFinishBatch
 
 
         self.task_queue = multiprocessing.Queue()
@@ -309,9 +328,11 @@ class EvalManager(object):
 
         # Flags
         self.keep_going = True
+        self.in_batch = False
 
         self.log = []
 
+        self.workers = []
         self.start_workers()
 
     @property
@@ -332,6 +353,7 @@ class EvalManager(object):
         task = Task(code, env, key)
         self.tasks.append(task)
         self.task_queue.put(task)
+        self.in_batch = True
         self.log.append("%s\t Placed task %s on queue" % (time.time(), task))
         return task.id
 
@@ -363,15 +385,15 @@ class EvalManager(object):
         self.tasks.cancel_outstanding()
 
         # Start the workers back up again (for next set of evals)
-        if not no_restart:
-            self.start_workers()
-            self.process_queues()
-        else:
+        if no_restart:
             self.log.append("%s\t EVAL_MANAGER Writing log" % time.time())
             f = open(r"C:\log.txt", 'a')
             f.write('\n'+'\n'.join(self.log)+'\n')
             f.close()
             self.workers = []
+        else:
+            self.start_workers()
+            self.keep_going = True
 
         busy.Destroy()
 
@@ -380,63 +402,90 @@ class EvalManager(object):
         message queues"""
         if self.keep_going:
             self.log.append("%s\t {{Top of Loop" % time.time())
-            # Pull off results queue
-            try:
-                res = self.result_queue.get_nowait()
-            except QueueEmpty:
-                pass
-            else:
-                assert res.type == MsgTypes.RESULT
-                self.log.append("%s\t Got a result for %s off result queue" %
-                                (time.time(), res.task))
-                self.OnResult(res)
-
-            # Pull off message queue
-            try:
-                msg = self.message_queue.get_nowait()
-            except QueueEmpty:
-                pass
-            else:
-                if msg.type == MsgTypes.STARTED:
-                    self.tasks.mark(msg.task, TaskStatus.IN_PROCESSING)
-                elif msg.type == MsgTypes.FINISHED:
-                    self.tasks.mark(msg.task, TaskStatus.COMPLETED)
-                self.OnError(msg)
-
-            # Update progress dialog
-            self._process_tasks_progress_dialog()
+            # Pull one result off queue
+            numQueueEmpty = 0
+            while numQueueEmpty < 2 and self.keep_going:
+                numQueueEmpty = 0
+                # Pull everything off message queue
+                while True:
+                    try:
+                        msg = self.message_queue.get_nowait()
+                    except QueueEmpty:
+                        numQueueEmpty += 1
+                        break
+                    else:
+                        if msg.type == MsgTypes.STARTED:
+                            self.tasks.mark(msg.task, TaskStatus.IN_PROCESSING)
+                        elif msg.type == MsgTypes.FINISHED:
+                            self.tasks.mark(msg.task, TaskStatus.EVALUATED)
+                        else:
+                            self.OnError(msg)
+                            self.tasks.mark(msg.task, TaskStatus.DISPLAYED)
+                # Pull a single result off the result queue
+                try:
+                    res = self.result_queue.get_nowait()
+                except QueueEmpty:
+                    numQueueEmpty += 1
+                else:
+                    assert res.type == MsgTypes.RESULT
+                    self.log.append("%s\t Got a result for %s off result queue" %
+                                    (time.time(), res.task))
+                    self.OnResult(res, doRefresh=self.num_jobs>0)
+                    self.tasks.mark(res.task, TaskStatus.DISPLAYED)
+                # Update progress dialog
+                self._process_tasks_progress_dialog()
 
             self.log.append("%s\t }}Yielding" % time.time())
 
     def _process_tasks_progress_dialog(self):
         """Helper function to manage the progress dialog"""
-        return
         progress = self.progress
-        if self.num_jobs == 0:
-            self.last_idle = time.time()
-            if progress is not None:
-                progress.Destroy()
-                progress = None
+        if self.tasks.num_not_finished == 0:
+            if self.in_batch:
+                # First time we've left the batch...maybe
+                self.EndBatch()
+            if not self.in_batch:
+                # See self.EndBatch for why this can't just be an else
+                self.last_idle = time.time()
+                if progress is not None:
+                    progress.Destroy()
+                    progress = None
         if self.last_idle + 3 < time.time():
+            # Update progress dialog
+            msg = ("Currently evaluating: %s \n"
+                   "Jobs left to be evaluated: %d; "
+                   "Jobs left to be displayed: %d")
+            msg = msg % (self.tasks.jobs_in_processing, self.num_jobs,
+                         self.tasks.num_not_finished)
             if progress is None:
                 # Create the progress dialog
                 title = "Working"
-                msg = "*"*80
                 style = wx.PD_CAN_ABORT | wx.PD_APP_MODAL | wx.PD_SMOOTH
 
-                progress = wx.ProgressDialog(title, msg, self.num_jobs,
+                progress = wx.ProgressDialog(title, msg, 1,
                                              self.main_window, style)
-                progress.inital_num_jobs = self.num_jobs
-            else:
-                # Update progress dialog
-                msg = "Currently working on: %s \nJobs left: %d"
-                msg = msg % (self.tasks.jobs_in_processing, self.num_jobs)
-                keep_going, skip = progress.Pulse(msg)
-                if not keep_going:
-                    self.terminate()
-                    progress.Destroy()
-                    progress = None
+            keep_going, skip = progress.Pulse(msg)
+            if not keep_going:
+                self.terminate()
+                progress.Destroy()
+                progress = None
         self.progress = progress
+        self.log.append("%s\t " % time.time() +
+                        str(self.tasks).replace('\n',"\n%s\t " % time.time()))
+        self.log.append("%s\t NotFin: %s" % (time.time(),
+                                          self.tasks.jobs_not_finished))
+
+    def EndBatch(self):
+        if (self.task_queue.qsize() == 0 and
+                self.result_queue.qsize() == 0 and
+                self.message_queue.qsize() == 0 and
+                self.tasks.num_not_finished == 0):
+            self.tasks = TaskList() # Empty the task list
+            self.OnFinishBatch()    # Call for grid referesh
+            self.in_batch = False
+        else:
+            self.in_batch = True
+
 
     def __del__(self):
         self.terminate()
