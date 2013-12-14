@@ -37,6 +37,8 @@ import types
 import wx.grid
 
 import matplotlib
+from src.gui._events import post_command_event
+
 matplotlib.use('Agg')
 import matplotlib.pyplot
 

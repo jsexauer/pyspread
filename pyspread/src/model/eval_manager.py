@@ -365,7 +365,7 @@ class EvalManager(object):
         # Start the workers back up again (for next set of evals)
         if not no_restart:
             self.start_workers()
-            self.process_tasks()
+            self.process_queues()
         else:
             self.log.append("%s\t EVAL_MANAGER Writing log" % time.time())
             f = open(r"C:\log.txt", 'a')
@@ -375,10 +375,10 @@ class EvalManager(object):
 
         busy.Destroy()
 
-    def process_tasks(self):
-        """Once evoked, runs continuously to read result and message queues"""
-        self.keep_going = True
-        while self.keep_going:
+    def process_queues(self, event):
+        """Evoke during idle event of main window to read result and
+        message queues"""
+        if self.keep_going:
             self.log.append("%s\t {{Top of Loop" % time.time())
             # Pull off results queue
             try:
@@ -407,7 +407,6 @@ class EvalManager(object):
             self._process_tasks_progress_dialog()
 
             self.log.append("%s\t }}Yielding" % time.time())
-            wx.YieldIfNeeded()
 
     def _process_tasks_progress_dialog(self):
         """Helper function to manage the progress dialog"""
@@ -504,7 +503,7 @@ class MyFrame(wx.Frame):
         # Start processing tasks
         for i in xrange(100):
             self.process_manager.add_task("(10+%d)" % i)
-        self.process_manager.process_tasks()
+        self.process_manager.process_queues()
 
     def OnTerm(self, event):
         self.process_manager.terminate()

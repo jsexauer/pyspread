@@ -263,6 +263,7 @@ class MainWindow(wx.Frame, EventMixin):
         self.Bind(self.EVT_CMD_SAFE_MODE_EXIT, handlers.OnSafeModeExit)
         self.Bind(wx.EVT_CLOSE, handlers.OnClose)
         self.Bind(self.EVT_CMD_CLOSE, handlers.OnClose)
+        self.Bind(wx.EVT_IDLE, self.grid.code_array.eval_manager.process_queues)
 
         # Preferences events
 

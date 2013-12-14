@@ -1183,6 +1183,8 @@ class CodeArray(DataArray):
                         "%s\t Adding task to queue: %s on %s" %
                         (time.time(), expression, key))
                 result = '...'
+                # Post an event to circle back and get the answer
+                wx.PostEvent(self.eval_manager.main_window,wx.IdleEvent())
 
             except AttributeError, err:
                 # Attribute Error includes RunTimeError
