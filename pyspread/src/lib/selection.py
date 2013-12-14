@@ -268,6 +268,37 @@ class Selection(object):
 
         return ((bb_top, bb_left), (bb_bottom, bb_right))
 
+    def get_grid_cells(self, shape):
+        """Return list of individual cells in this selection for a
+           given grid's shape"""
+
+        in_shape = lambda c: c[0] <= shape[0] and c[1] <= shape[1]
+
+        # Add individual cells
+        cells = set([c for c in self.cells if in_shape(c)])
+
+        for col in self.cols:
+            if col <= shape[1]:
+                # All cells in a column
+                for row in xrange(shape[0]):
+                    cells.add((row, col))
+
+        for row in self.rows:
+            if row <= shape[0]:
+                # All cells in a row
+                for col in xrange(shape[1]):
+                    cells.add((row, col))
+
+        for box in zip(self.block_tl, self.block_br):
+            for x in xrange(box[0][0], box[1][0]+1):
+                for y in xrange(box[0][1], box[1][1]+1):
+                    c = (x, y)
+                    if in_shape(c):
+                        cells.add((x,y))
+
+        return list(cells)
+
+
     def get_access_string(self, shape, table):
         """Returns a string, with which the selection can be accessed
 
