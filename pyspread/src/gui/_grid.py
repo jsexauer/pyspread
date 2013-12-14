@@ -773,7 +773,7 @@ class GridCellEventHandlers(object):
         event.Skip()
 
 
-class GridEventHandlers(object):
+class GridEventHandlers(EventMixin):
     """Contains grid event handlers"""
 
     def __init__(self, grid):
@@ -836,6 +836,18 @@ class GridEventHandlers(object):
                 grid.actions.set_code(key, '"' + val + '"')
 
                 grid.MoveCursorDown(False)
+
+            elif keycode == ord('B'):
+                # <Ctrl> + B -- Bold
+                post_command_event(self.main_window, self.FontBoldMsg)
+
+            elif keycode == ord('I'):
+                # <Ctrl> + I -- Italics
+                post_command_event(self.main_window, self.FontItalicsMsg)
+
+            elif keycode == ord('U'):
+                # <Ctrl> + U -- Underline
+                post_command_event(self.main_window, self.FontUnderlineMsg)
 
         else:
             # No Ctrl pressed
