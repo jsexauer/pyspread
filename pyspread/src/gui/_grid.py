@@ -808,8 +808,30 @@ class GridEventHandlers(object):
 
         keycode = event.GetKeyCode()
 
+        if keycode == 13 and event.ControlDown():
+            # <Ctrl> + <Enter>
+            grid = self.grid
+            tab = grid.current_table
+            grid.DisableCellEditControl()
+
+            cells = grid.selection.get_grid_cells(grid.code_array.shape)
+            if cells == []:
+                # No selection, do cursor instead
+                cells = [(self.grid.GetGridCursorRow(),
+                          self.grid.GetGridCursorCol(),
+                          tab)]
+
+            for key in cells:
+                key = (key[0], key[1], tab)
+                val = grid.code_array(key)
+                if val is not None:
+                    if not (val[0] in ('"', "'") and val[-1] in ('"', "'")):
+                        grid.actions.set_code(key, '"' + val + '"')
+
+            grid.MoveCursorDown(False)
+
         # If in selection mode and <Enter> is pressed end it
-        if not self.grid.IsEditable() and keycode == 13:
+        elif not self.grid.IsEditable() and keycode == 13:
             ## TODO!
             pass
 
@@ -821,21 +843,6 @@ class GridEventHandlers(object):
             elif keycode == 390:
                 # Ctrl + - pressed
                 post_command_event(self.grid, self.grid.ZoomOutMsg)
-
-            elif keycode == 13:
-            # <Ctrl> + <Enter>
-                grid = self.grid
-                grid.DisableCellEditControl()
-
-                row = self.grid.GetGridCursorRow()
-                col = self.grid.GetGridCursorCol()
-                tab = grid.current_table
-                key = row, col, tab
-
-                val = grid.code_array(key)
-                grid.actions.set_code(key, '"' + val + '"')
-
-                grid.MoveCursorDown(False)
 
         else:
             # No Ctrl pressed
