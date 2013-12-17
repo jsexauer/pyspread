@@ -41,6 +41,22 @@ from StringIO import StringIO
 
 import time
 
+import src.lib.process_isolation as process_isolation
+
+b = 0       # A variable, located here in the host process,
+            #   we are trying to change in a remote process
+
+# A stupid test class used to test if we can change objects hosted in the
+#   parent process in the remote process
+class Stupid:
+    def __init__(self):
+        self._a = 0
+    def addStupid(self):
+        self._a += 1
+    @property
+    def a(self):
+        return self._a
+
 
 class MsgTypes(object):
     INFO, RESULT, STATUS, USER_ERROR = range(4)
@@ -81,7 +97,8 @@ class PrMsg(object):
 
 
 class Worker(multiprocessing.Process):
-    def __init__(self, task_queue, output_queue):
+    def __init__(self, task_queue, output_queue,
+                 delegate_channel, result_channel):
         """
         Worker which performs tasks from the task queue, post the results to
         the results queue and send status and error messages on the msg queue
@@ -89,6 +106,10 @@ class Worker(multiprocessing.Process):
         multiprocessing.Process.__init__(self)
         self.task_queue = task_queue
         self.output_queue = output_queue
+        self.delegate_channel = delegate_channel
+        self.result_channel = result_channel
+        self.proxy_client = None
+
 
     def sign(self, next_task):
         """Sign all messages as coming from this worker performing this task"""
@@ -96,12 +117,16 @@ class Worker(multiprocessing.Process):
             def __init__(self, orig_put, worker, task):
                 self.orig_put = orig_put
                 self.worker = worker
-                self.task = task
+                # Our version of the task has the client attached and thus
+                # cannot be pickled.  Create a fake version of the task which
+                # will looks just like how we used to look, except the
+                # environment is stripped out
+                self.task = Task(task.code, None, task.key)
+                self.task.id = task.id
             def __call__(self, msg, block=True, timeout=None):
                 assert isinstance(msg, PrMsg)
                 msg.worker = self.worker.name
                 msg.task = self.task
-                #msg.log()
                 return self.orig_put(msg, block, timeout)
 
         # Wrap the message queue's put function
@@ -113,6 +138,11 @@ class Worker(multiprocessing.Process):
         self.output_queue.put = self.output_queue.put.orig_put
 
     def run(self):
+        # Create a proxy client
+        self.proxy_client = process_isolation.Client(
+            delegate_channel=self.delegate_channel,
+            result_channel=self.result_channel,
+            server_process=self)
         while True:
             # Perform a task off of the queue
             next_task = self.task_queue.get()
@@ -124,7 +154,8 @@ class Worker(multiprocessing.Process):
 
             self.output_queue.put(PrMsg('', MsgTypes.STARTED))
             try:
-                answer = next_task(self.output_queue)
+                next_task.prep(self.proxy_client)
+                answer = next_task()
             except:
                 # The main task didn't execute.  Report an error
                 s = StringIO()
@@ -145,6 +176,8 @@ class Task(object):
         self.env = env
         self.key = key
         self.id = -1        # Defined by task list
+        self._env = None    # Defined when client proxy attached
+        self._update_on_server = []
 
     def __str__(self):
         code = self.code
@@ -155,11 +188,35 @@ class Task(object):
 
     __repr__ = __str__
 
-    def __call__(self, output_queue):
+    def __call__(self):
         """Evaluate the user's code"""
         #time.sleep(1)
-        answer = eval(self.code, self.env, {})
-        return answer
+        exec(self.code, {}, self.env)
+        return self.post()
+
+    def prep(self, proxy_client):
+        """Build the environment using this worker's proxy client"""
+        self._env = proxy_client.attach_proxy(self.env)
+        self.env = {}
+        for k, v in self._env.iteritems():
+            assert type(k) is str
+            self.env[k] = v
+            if not process_isolation.isproxy(v):
+                self._update_on_server.append(k)
+                print ">> %s is not a proxy, mark to reupdate on server" % k
+            else:
+                print ">> %s is a proxy.  All good" % k
+
+    def post(self):
+        """Send the parts of the environment we need to manually reupdate
+        because they are not getting proxied"""
+        post_env = {}
+        for k in self._update_on_server:
+            post_env[k] = self.env[k]
+        return post_env
+
+
+
 
 class TaskStatus(object):
     QUEUED, IN_PROCESSING, EVALUATED, DISPLAYED = range(4)
@@ -250,6 +307,10 @@ class EvalManager(object):
 
         self.task_queue = multiprocessing.Queue()
         self.output_queue = multiprocessing.Queue()
+        self.delegate_channel = multiprocessing.Queue()
+        self.result_channel = multiprocessing.Queue()
+        self.proxy_server = process_isolation.Server(self.delegate_channel,
+                                                     self.result_channel)
 
         self.num_workers = 1
         self.last_idle = time.time()
@@ -272,13 +333,16 @@ class EvalManager(object):
         # Start up the workers
         self.workers = []
         for i in xrange(self.num_workers):
-            w = Worker(self.task_queue, self.output_queue)
+            w = Worker(self.task_queue, self.output_queue,
+                       self.delegate_channel, self.result_channel)
             w.start()
             self.workers.append(w)
 
     def add_task(self, code, env, key):
         """Add some code to eval to the queue"""
-        task = Task(code, env, key)
+        # Build a proxy of the environment
+        proxy_env = self.proxy_server.wrap(env)
+        task = Task(code, proxy_env, key)
         self.tasks.append(task)
         self.task_queue.put(task)
         if not self.in_batch:
@@ -328,6 +392,9 @@ class EvalManager(object):
     def process_queues(self, event):
         """Evoke during idle event of main window to read output queues"""
         while self.keep_going:
+            # Let the proxy server take a shot at things
+            self.proxy_server.one_loop()
+
             try:
                 msg = self.output_queue.get_nowait()
             except QueueEmpty:
@@ -414,7 +481,7 @@ class MyFrame(wx.Frame):
         """
 
         self.process_manager = EvalManager(self, self.UpdateStatus,
-                                           self.UpdateStatus)
+                                           self.UpdateStatus, self.UpdateStatus)
 
         wx.Frame.__init__(self, parent, id, title, wx.Point(700, 500),
                           wx.Size(600, 300))
@@ -449,6 +516,10 @@ class MyFrame(wx.Frame):
         self.panel.SetSizer(self.sizer)
 
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.Bind(wx.EVT_IDLE, self.process_manager.process_queues)
+
+        # The magic variable we're trying to modify
+        self.a = Stupid()
 
 
     def OnStart(self, event):
@@ -459,9 +530,10 @@ class MyFrame(wx.Frame):
         #self.stop_bt.Enable(True)
         self.output_tc.AppendText('Unordered results...\n')
         # Start processing tasks
-        for i in xrange(100):
-            self.process_manager.add_task("(10+%d)" % i)
-        self.process_manager.process_queues()
+        env = {'a': self.a, 'b': b, 'time': time}
+        for i in xrange(1,4):
+            self.process_manager.add_task("a.addStupid()\nb += %s\ntime.sleep(2)" % i,
+                        env, key=i)
 
     def OnTerm(self, event):
         self.process_manager.terminate()
@@ -476,8 +548,13 @@ class MyFrame(wx.Frame):
         self.process_manager.terminate(no_restart=True)
         self.Destroy()
 
-    def UpdateStatus(self, msg):
+    def UpdateStatus(self, msg='', doRefresh=None):
+        if hasattr(msg, 'msg') and type(msg.msg) is dict:
+            globals().update(msg.msg)
         self.output_tc.AppendText("Output: %s\n" % msg)
+        self.output_tc.AppendText(" My a = %s\n" % self.a.a)
+        self.output_tc.AppendText(" My b = %s\n" % b)
+
 
 
 class MyApp(wx.App):
